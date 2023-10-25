@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<title>three stork path</title>
+	<style type="text/css">
+		* {
+		  box-sizing: border-box;
+		}
+
+		html,body,.scroll {
+		  	width: 100%;
+		  	height: 100%;
+		  	margin: 0;
+		  	padding: 0;
+		  	user-select: none;
+		  	overflow: hidden;
+		}
+
+		.scroll {
+			
+		  position: absolute;
+		  top: 0;
+		  left: 0;
+		  overflow-y: auto;
+		  scroll-snap-type: y proximity;
+		  z-index: 100;
+		}
+
+		.arrow {
+			position: absolute;
+			left:50%;
+			bottom: 80px;
+			transform: translate(-50%, 0);
+			transition: transform 1s;
+			opacity:.5;
+			display: block;
+		}
+
+		.arrowdown{
+			position: absolute;
+			left:50%;
+			bottom: 80px;
+			transform: translate(-50%, 180px);
+		}
+
+		.arrowup{
+			position: absolute;
+			left:50%;
+			bottom: 80px;
+			transform: translate(-50%, 0px);
+		}
+		.scroll > div {
+		  scroll-snap-align: start;
+		}
+
+		.hud{
+			position:absolute;
+			left: 0px;
+			top:0px;
+			display: inline-flex;
+			margin: 10px;
+			width:200px;
+			z-index: 1000;
+		}
+
+		.hud .btn{
+
+		}
+	</style>
+	<script type="x-shader/x-vertex" id="vertexShader">
+		varying vec3 vWorldPosition;
+
+		void main() {
+
+			vec4 worldPosition = modelMatrix * vec4( position, 1.0 );
+			vWorldPosition = worldPosition.xyz;
+
+			gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+		}
+	</script>
+	<script type="x-shader/x-fragment" id="fragmentShader">
+
+			uniform vec3 topColor;
+			uniform vec3 bottomColor;
+			uniform float offset;
+			uniform float exponent;
+
+			varying vec3 vWorldPosition;
+
+			void main() {
+
+				float h = normalize( vWorldPosition + offset ).y;
+				gl_FragColor = vec4( mix( bottomColor, topColor, max( pow( max( h , 0.0), exponent ), 0.0 ) ), 1.0 );
+
+			}
+	</script>
+</head>
+<body>
+	<img src="./images/arrow.png" class="arrow"></img>
+	<div class="scroll">
+		<div style="height: 500vh;"></div>
+	</div>
+<!-- 	<script type="text/javascript" src="./js/vendors/three.js"></script>
+	<script type="text/javascript" src="./js/vendors/GLTFLoader.js"></script>
+	<script type="text/javascript" src="./js/path_controller.js"></script> -->
+	<script type="module">
+		import * as THREE from './src/vendors/three.js-131/build/three.module.js';
+		import { EffectComposer } from './src/vendors/three.js-131/examples/jsm/postprocessing/EffectComposer.js';
+		import { RenderPass } from './src/vendors/three.js-131/examples/jsm/postprocessing/RenderPass.js';
+		import { ShaderPass } from './src/vendors/three.js-131/examples/jsm/postprocessing/ShaderPass.js';		
+		import { FilmPass } from './src/vendors/three.js-131/examples/jsm/postprocessing/FilmPass.js';
+		import { VignetteShader } from './src/vendors/three.js-131/examples/jsm/shaders/VignetteShader.js';
+		import { TWEEN } from './src/vendors/three.js-131/examples/jsm/libs/tween.module.min.js';
+		import { GlitchPass } from './src/vendors/three.js-131/examples/jsm/postprocessing/GlitchPass.js';
+		import { BokehPass } from './src/vendors/three.js-131/examples/jsm/postprocessing/BokehPass.js';
+		import { TTFLoader } from './src/vendors/three.js-131/examples/jsm/loaders/TTFLoader.js';
+			import { Font } from './src/vendors/three.js-131/examples/jsm/loaders/FontLoader.js';
+			import { TextGeometry } from './src/vendors/three.js-131/examples/jsm/geometries/TextGeometry.js';
+		import Transition from './src/Transition.js';
+		import FXScene from './src/FXScene.js';
+
+		import PathController from './src/PathController.js';
+		import RGBShiftShader from './src/RGBShiftShader.js';
+		import Model from './src/Model.js';
+
+		const treePath = './resources/gltf/tree.glb'
+
+		const clock = new THREE.Clock()
+		const planes = [];
+
+		let rgbShiftPass;
+		let camera, scene, renderer, composer;
+		let hemiLight, dirLight;
+		let mesh,meshB;
+		let tree, pathController, pathControllerB;
+		let uid, model, animations, mixer;  
+		let scrollVal = 0, mm;
+		let glitchEnabled = true;
+		const glitchPass = new GlitchPass();
+		
+		let bokehPass;
+
+		const effectController = {
+			focus: 500.0,
+			aperture: 5,
+			maxblur: 0.01
+		};
+
+		const colorA = new THREE.Color(0,0,1);
+		const colorB = new THREE.Color(1,0,0);
+		let colorLerped;
+
+		const instanceCount = 15000;
+		const datas = [];
+		const dummy = new THREE.Object3D();
+		const texts = ['', 'Scroll','to','travel','along','the','path'];
+		const poses = []
+		let uniforms;
+		let effectFilm,effectFilmBW,shaderVignette,effectVignette;
+		let launched= false;
+		let sceneA, sceneB, transition;
+
+		const sceneGroupA = new THREE.Group();
+		const sceneGroupB = new THREE.Group();
+		let sky;
+		let ang = 0;
+		let dir = 0;
+		let hideArrow = true;
+
+		const randomizeRGB = () => {
+	        rgbShiftPass.uniforms.angle.value = 0;
+	        rgbShiftPass.uniforms.amount.value = 0;
+
+	        const t = 0.05 + Math.random() * 0.1;
+	        const val = 0.009 + (Math.random() * 0.006);
+
+	        if (val > 0.1) {
+	            let num = (2 + Math.round(Math.random() * 3));
+	            if (num === 4) num = 5;
+	        }
+
+	        const obj = {
+	            amount: val,
+	            angle: Math.random() * ((90 * Math.PI) / 180),
+	        };
+
+	        new TWEEN.Tween(obj).to({
+	            amount: rgbShiftPass.uniforms.amount.value,
+	            angle: rgbShiftPass.uniforms.angle.value,
+	        }, t * 1000)
+	            .onComplete(() => {
+	                const redoTime = Math.random() * 2000;
+
+	                setTimeout(randomizeRGB, redoTime);
+	            })
+	            .onUpdate(() => {
+	                rgbShiftPass.uniforms.amount.value = obj.amount;
+	                rgbShiftPass.uniforms.angle.value = obj.angle;
+	                // console.log(badTVPass.uniforms.distortion.value);
+	            })
+	            .start();
+	    };
+
+	    const initTexts = () => {
+	    	const loader = new TTFLoader();
+				loader.load('./NeulandGrotesk-CondensedLight.ttf', (json) => {
+						console.log(json);
+						const font = new Font(json);
+
+						const matLite = new THREE.MeshBasicMaterial( {
+							color: 'white',
+							transparent: true,
+							opacity: 0.6,
+							side: THREE.DoubleSide,
+							blending:THREE.AdditiveBlending
+						} );
+
+						const matLite2 = new THREE.MeshBasicMaterial( {
+							color: 0xffcc00,
+							transparent: true,
+							opacity: 0.6,
+							side: THREE.DoubleSide,
+							blending:THREE.AdditiveBlending
+						} );
+
+						const len = texts.length;
+
+				    	for (let i = 0; i < len; i += 1) {
+				    		console.log(i,texts[i]);
+
+				    		const shapes = font.generateShapes( texts[i], 4 );
+
+							const geometry = new THREE.ShapeGeometry( shapes );
+
+							geometry.computeBoundingBox();
+
+							const xMid = - 0.5 * ( geometry.boundingBox.max.x - geometry.boundingBox.min.x );
+
+							geometry.translate( xMid, 0, 0 );
+
+				    		const pos = pathController.getPositionAt((1 / len)* i);
+
+				    		poses.push((1 / len)* i);
+
+				    		const pos2 = pathController.getPositionAt(((1 / len)* i)+ 0.02);
+				    		let plane;
+
+				    		
+				    		
+				    		if((1 / len)* i > .32){
+				    			plane = new THREE.Mesh( geometry, matLite.clone());
+					    		sceneGroupA.add(plane);
+				    		}
+					    	else{
+					    		plane = new THREE.Mesh( geometry, matLite2.clone());
+					    		sceneGroupB.add(plane);
+					    	}
+
+					    	plane.geometry.rotateY(-Math.PI * .5);
+
+				    		plane.position.copy(pos);
+				    		plane.lookAt(pos2);
+				    		plane.rotateY(-Math.PI* .5);
+				    		plane.position.y -= .25;
+				    		planes.push(plane);
+				    	}
+
+						
+				})
+	    };
+
+		const initLight = () => {
+			hemiLight = new THREE.HemisphereLight( 0xffcc00, 0xffffff, 0.6 );
+			hemiLight.color.setHSL( 0.6, .3, 0.1 );
+			hemiLight.groundColor.setHSL( 0.095, 1, 0.5 );
+			hemiLight.position.set( 0, 50, 0 );
+			sceneGroupA.add( hemiLight );
+
+			dirLight = new THREE.DirectionalLight( 0xffffff, 1 );
+			dirLight.color.setHSL( 0.1, 1, 0.95 );
+			dirLight.position.set( - .1, 1.75, 1 );
+			dirLight.position.multiplyScalar( 30 );
+			sceneGroupA.add( dirLight );
+
+			dirLight.castShadow = true;
+
+			dirLight.shadow.mapSize.width = 2048;
+			dirLight.shadow.mapSize.height = 2048;
+
+			const d = 200;
+
+			dirLight.shadow.camera.left = - d;
+			dirLight.shadow.camera.right = d;
+			dirLight.shadow.camera.top = d;
+			dirLight.shadow.camera.bottom = - d;
+
+			dirLight.shadow.camera.far = 3500;
+			dirLight.shadow.bias = - 0.0001;
+		};
+
+		const initScenes = () => {
+			sceneA = FXScene(
+				renderer,
+				composer,
+				0x090c11,
+				false
+			);
+
+			sceneB = FXScene(
+				renderer,
+				composer,
+				0x090c11,
+				false
+			);
+
+			transition = Transition(renderer, composer, sceneA, sceneB);
+		};
+
+		const initRenderer = () => {
+			/*camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight,1,500);
+			camera.position.set(0, 0, 0);
+
+			scene = new THREE.Scene();
+			scene.background = new THREE.Color().setHSL(0.6,0,1);
+			scene.fog = new THREE.Fog(scene.background,10,350);*/
+
+			renderer = new THREE.WebGLRenderer({antialias:true});
+			renderer.setSize(innerWidth, innerHeight);
+			document.body.appendChild(renderer.domElement);
+			renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+			renderer.outputEncoding = THREE.sRGBEncoding;
+			renderer.toneMapping = THREE.ACESFilmicToneMapping;
+			renderer.shadowMap.enabled = true;
+
+
+			composer = new EffectComposer( renderer );
+			
+			effectFilm = new FilmPass( 0.35, 0.025, 648, false );
+			effectFilmBW = new FilmPass( 0.35, 0.5, 2048, false );
+
+			shaderVignette = VignetteShader;
+			effectVignette = new ShaderPass( shaderVignette );
+			
+			
+			effectVignette.uniforms[ "offset" ].value = 0.95;
+				effectVignette.uniforms[ "darkness" ].value = 1.6;
+			rgbShiftPass = new ShaderPass(RGBShiftShader);
+
+			randomizeRGB();		
+		};
+
+		const initEvents = () => {
+			const scroll = document.querySelector('.scroll');
+
+			scroll.addEventListener('scroll', (e) => {
+				const val = e.target.scrollTop / (e.target.scrollHeight - window.innerHeight);
+
+				if(val < 1){
+					if(hideArrow){
+		    			hideArrow = false;
+		    			
+		    			const arrow = document.querySelector('.arrow');
+		    			arrow.classList.toggle("arrowdown");
+		    		}else{
+
+		    		}
+				} else if(val == 0){
+					hideArrow = true;
+					
+	    			const arrow = document.querySelector('.arrow');
+	    			arrow.classList.remove("arrowdown");	
+				}
+
+				if(val > 0 && glitchEnabled){
+					glitchEnabled = false;
+					composer.removePass(glitchPass);
+				} else if(val === 0 && !glitchEnabled){
+					glitchEnabled = true;
+					composer.addPass(glitchPass);
+				}
+
+				if(val < .6) {
+					scrollVal = THREE.MathUtils.mapLinear(val, 0, 0.6, 0, .96);
+				}else{
+					ang = THREE.MathUtils.mapLinear(val, 0.6, 1, 0, 1);
+
+				}
+	    		
+	    		//console.log(scrollVal);
+	    	});
+		};
+
+		const initPathController = (scene) => {
+			const pt = PathController(scene.scene)
+				pt.init(scene.camera, scene.scene, [
+				new THREE.Vector3( -49.6435546875 , 0.6165056228637695 , 16.64784812927246 ),
+				new THREE.Vector3( -10.300847053527832 , 8.794692993164062 , 22.009214401245117 ),
+				new THREE.Vector3( 17.289867401123047 , 11.920282363891602 , 9.27254581451416 ),
+				new THREE.Vector3( 29.749309539794922 , 8.004924774169922 , -15.419958114624023 ),
+				new THREE.Vector3( 14.709699630737305 , 4.400015354156494 , -38.64426803588867 ),
+				new THREE.Vector3( -5.164644718170166 , 8.621381759643555 , -48.407867431640625 ),
+				new THREE.Vector3( -20.279685974121094 , 22.899337768554688 , -39.67211151123047 ),
+				new THREE.Vector3( -28.565040588378906 , 36.223045349121094 , -25.72216033935547 ),
+				new THREE.Vector3( -15.095879554748535 , 43.27153778076172 , -15.015270233154297 ),
+				new THREE.Vector3( 4.746000289916992 , 32.666175842285156 , -12.795391082763672 ),
+				new THREE.Vector3( 23.10938262939453 , 22.156972885131836 , -14.393880844116211 ),
+				new THREE.Vector3( 34.40583038330078 , 22.871171951293945 , 10.409327507019043 ),
+				new THREE.Vector3( 20.908782958984375 , 26.625896453857422 , 31.391353607177734 ),
+				new THREE.Vector3( -15.648752212524414 , 35.498111724853516 , 37.785247802734375 ),
+				new THREE.Vector3( -76.919921875 , 7.39532470703125 , 18.305194854736328 )
+			])
+
+			pt.debug = false;
+			return pt;
+		};
+
+		const initGeometry = (base = false) => {
+
+			let baseGeometry;
+
+			//if(!base)
+				baseGeometry = new THREE.DodecahedronBufferGeometry(1,0);
+			//else
+			//	baseGeometry = new THREE.BoxBufferGeometry(2,2,2);
+
+			const geometry = new THREE.InstancedBufferGeometry();
+		    geometry.index = baseGeometry.index;
+		    geometry.attributes.position = baseGeometry.attributes.position;
+
+		    geometry.attributes.uv = baseGeometry.attributes.uv;
+		    geometry.attributes.normal = baseGeometry.attributes.normal;
+
+		    
+		    const material = new THREE.MeshStandardMaterial({
+		    	metalness:.8,
+		    	roughness:.3,
+		    });
+		    
+		    const m = new THREE.InstancedMesh( geometry, material, instanceCount );
+		    m.frustumCulled = false;
+		    m.receiveShadow = true;
+			m.castShadow = true;
+		    
+			let ang;
+		    
+
+		    for ( let i = 0; i < instanceCount; i ++ ) {
+		    	
+		    	let s,x,y, z;
+
+		    	
+	    		ang = 0;
+	    		x = Math.random() * 200 - 100
+	    		y = 100 - i;
+	    		z = Math.random() * 200 - 100;
+	    		s = Math.random() * 6 + .3;
+		    	
+		 		const r0 = Math.random() * 90;
+		 		datas.push({angle:ang, scale:s, rotation:r0, rand:Math.random(), position:{x, y, z}});
+		    	dummy.scale.set(s,s,s)
+		        dummy.position.set(x,y,z);
+		        dummy.rotation.set(r0,r0,r0);
+		        dummy.updateMatrix();
+		        m.setMatrixAt(i, dummy.matrix);
+		    }
+
+		    return m;
+		};
+
+		const initStars = () => {
+
+			let baseGeometry = new THREE.TetrahedronBufferGeometry(1,0);
+		
+			const geometry = new THREE.InstancedBufferGeometry();
+		    geometry.index = baseGeometry.index;
+		    geometry.attributes.position = baseGeometry.attributes.position;
+
+		    geometry.attributes.uv = baseGeometry.attributes.uv;
+		    geometry.attributes.normal = baseGeometry.attributes.normal;
+		    
+		    const material = new THREE.MeshStandardMaterial({
+		    	metalness:.8,
+		    	roughness:.3,
+		    	color:new THREE.Color(1,1,1)
+		    });
+		    
+		    const m = new THREE.InstancedMesh( geometry, material, instanceCount );
+		    m.frustumCulled = false;
+		    m.receiveShadow = true;
+			m.castShadow = true;
+		    
+			let ang;
+
+		    for ( let i = 0; i < 5000; i ++ ) {
+		    	
+		    	let s,x,y, z;
+
+		    	
+	    		ang = 0;
+	    		x = Math.random() * 200 - 100;
+	    		y = Math.random() * 200 - 100;
+	    		z = Math.random() * 200 - 100;
+	    		s = Math.random() * .3;
+		    	
+		 		const r0 = Math.random() * 90;
+	
+		    	dummy.scale.set(s,s,s)
+		        dummy.position.set(x,y,z);
+		        dummy.rotation.set(r0,r0,r0);
+		        dummy.updateMatrix();
+		        m.setMatrixAt(i, dummy.matrix);
+		    }
+
+		    return m;
+		};
+
+		const initSky = () => {
+			const groundGeo = new THREE.PlaneBufferGeometry( 10000, 10000 );
+			const groundMat = new THREE.MeshLambertMaterial( { color: 0xffffff } );
+			groundMat.color.setHSL( 0.095, 1, 0.75 );
+
+			const ground = new THREE.Mesh( groundGeo, groundMat );
+			ground.position.y = - 33;
+			ground.rotation.x = - Math.PI / 2;
+			ground.receiveShadow = true;
+			sceneGroupA.add( ground );
+
+			// SKYDOME
+			const vertexShader = document.getElementById( 'vertexShader' ).textContent;
+			const fragmentShader = document.getElementById( 'fragmentShader' ).textContent;
+			uniforms = {
+				"topColor": { value: new THREE.Color( 0x0077ff ) },
+				"bottomColor": { value: new THREE.Color( 0xffffff ) },
+				"offset": { value: 33 },
+				"exponent": { value: 0.6 }
+			}
+
+			uniforms[ "topColor" ].value.copy( hemiLight.color );
+
+
+			const skyGeo = new THREE.SphereBufferGeometry( 400, 32, 15 );
+			const skyMat = new THREE.ShaderMaterial( {
+				uniforms: uniforms,
+				vertexShader: vertexShader,
+				fragmentShader: fragmentShader,
+				side: THREE.BackSide
+			} );
+
+			sky = new THREE.Mesh( skyGeo, skyMat );
+			sceneGroupA.add( sky );			
+		};
+
+		const initModel = async() => {
+			return new Promise(async(resolve) => {
+				model = Model({
+					renderer,
+					position: pathController.getPositionAt(1.)
+				})
+
+				mm = await model.init();
+				sceneGroupA.add(mm);
+
+				//mm.rotation.copy(camera.rotation);
+				const p2=pathController.getPositionAt(.98)
+				//mm.lookAt(p2);
+
+				resolve(true);
+			});
+		};
+
+		const init = async() => {
+
+			initRenderer();
+			initScenes();
+			initLight();
+			pathController = initPathController(sceneA);
+			pathControllerB = initPathController(sceneB);
+			initEvents();
+			initSky();
+
+			mesh = initGeometry();
+			sceneGroupA.add(mesh);
+			meshB = initGeometry(true);
+			sceneGroupB.add(meshB);
+			sceneGroupB.add(initStars());
+
+			initTexts();
+			await initModel();
+			sceneA.scene.background = new THREE.Color().setHSL(0.6,0,1);
+			sceneA.scene.fog = new THREE.Fog(sceneA.scene.background,10,350);
+			sceneA.scene.fog.color.copy( uniforms[ "bottomColor" ].value );
+			sceneA.scene.add(sceneGroupA);
+			sceneB.scene.add(sceneGroupB);
+
+			bokehPass = new BokehPass( sceneA.scene, sceneA.camera, {
+				focus: 1.0,
+				aperture: 0.025,
+				maxblur: 0.01,
+
+				width: window.innerWidth,
+				height: window.innerHeight
+			} );
+
+
+
+			composer.addPass(effectFilmBW);
+			composer.addPass(rgbShiftPass);
+			composer.addPass(glitchPass);
+			composer.addPass(effectVignette);
+			//composer.addPass(bokehPass);
+
+			pathController.play();
+			pathControllerB.play();
+
+			update();
+		};
+
+		const updateIstancedMesh = (m, time) => {
+			for ( let i = 0; i < instanceCount; i ++ ) {
+		    	const {angle,scale,rotation,position,rand} = datas[i];
+
+		    	const {x,y,z} = position;
+	    		dummy.scale.set(scale,scale,scale)
+	    		const _y = y+Math.sin(rand * time) * .1;
+	    		const r = rotation+rand * .025;  
+		        dummy.position.set(x,y,z);
+		        dummy.rotation.set(rotation,rotation,rotation);
+		        dummy.updateMatrix();
+
+		        m.setMatrixAt(i, dummy.matrix);
+	    		
+	    		datas[i].position.y =_y
+		 		datas[i].rotation = r;
+		    	
+		    }
+
+			m.instanceMatrix.needsUpdate = true;
+		};
+
+ 		const update = () => {
+			uid = requestAnimationFrame(update)
+			
+			const delta = clock.getDelta();
+			const time = clock.getElapsedTime();
+			
+			transition.render(delta);
+
+			updateIstancedMesh(mesh, time);
+			updateIstancedMesh(meshB, time);
+			
+			pathController.update(delta, scrollVal);
+			pathControllerB.update(delta, scrollVal);
+			//console.log(scrollVal,  dir);
+			if(scrollVal > .32 && !launched && dir == 0){
+				dir = 1
+				launched = true;
+
+				transition.launchTransition();
+			}else if(scrollVal < .32 && launched && dir == 1){
+				// /alert('yop')
+				dir = 0
+				launched = false;
+				transition.launchTransition(true);
+			}
+
+				colorLerped = new THREE.Color().lerpColors(colorA, colorB, scrollVal);
+				hemiLight.color = colorLerped;
+
+				sky.material.uniforms[ "topColor" ].value.copy( hemiLight.color );
+				model.update({scroll:ang, delta});
+      			//rotateAboutPoint(camera, pos, new THREE.Vector3(0, 1, 0), ang)
+      			//afterimagePass.uniforms[ "damp" ].value = (1 - ang) - .2;
+      			
+      			/*const dir = camera.position.sub(mm.position);
+      			camera.position.copy(mm.position);
+      			camera.rotation.y = ang*Math.PI*2;
+      			camera.translateZ(10);
+				*/
+
+			
+			TWEEN.update();
+			for(let i=0; i<planes.length; i++){
+				
+				//if(i===1){
+					const p = planes[i];
+					
+					let va= Math.abs(scrollVal - poses[i]) * 10
+					va = THREE.MathUtils.clamp(va, 0, 1);
+					va= 1 -  va;
+				
+					p.material.opacity = va;
+				//}
+			}
+
+			
+			//renderer.render(scene, camera)
+			//composer.render();
+		};
+
+    	init();
+
+	</script>
+</body>
+</html>
